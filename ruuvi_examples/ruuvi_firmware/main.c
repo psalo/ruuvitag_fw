@@ -325,6 +325,7 @@ void app_nfc_callback(void* p_context, nfc_t2t_event_t event, const uint8_t* p_d
   }
 }
 
+//#define GREEN_HEATPUMP_ERROR_INDICATOR
 
 /**@brief Function for doing power management.
  */
@@ -333,8 +334,12 @@ static void power_manage(void)
   // Clear both leds before sleep if not indicating button press
   if (nrf_gpio_pin_read(BUTTON_1))
   {
-  GREEN_LED_OFF;
-  RED_LED_OFF;
+    #ifdef GREEN_HEATPUMP_ERROR_INDICATOR
+    RED_LED_OFF;
+    #else
+    GREEN_LED_OFF;
+    RED_LED_OFF;
+    #endif
   }
   uint32_t err_code = sd_app_evt_wait();
   APP_ERROR_CHECK(err_code);
@@ -346,9 +351,10 @@ static void updateAdvertisement(void)
   bluetooth_set_manufacturer_data(data_buffer, advertising_sizes[tag_mode]);
 }
 
-
+#define POLL_INPUT 04 // tag pin 10  = P0.04 = GPIO
 static void main_sensor_task(void* p_data, uint16_t length)
 {
+
   // Signal mode by led color.
   if (RAWv1 == tag_mode) { RED_LED_ON; }
   else { GREEN_LED_ON; }
@@ -362,6 +368,22 @@ static void main_sensor_task(void* p_data, uint16_t length)
                           .vbat = vbat
                         };
   lis2dh12_sensor_buffer_t buffer;
+
+  uint32_t pin_value = nrf_gpio_pin_read(POLL_INPUT);
+  if( pin_value )
+  {
+    data.accZ = 0x400;
+    #ifdef GREEN_HEATPUMP_ERROR_INDICATOR
+    GREEN_LED_ON;
+    #endif
+  }
+  else
+  {
+    data.accZ = 0x000;
+    #ifdef GREEN_HEATPUMP_ERROR_INDICATOR
+    GREEN_LED_OFF;
+    #endif
+  }
 
   if (fast_advertising && ((millis() - fast_advertising_start) > ADVERTISING_STARTUP_PERIOD))
   {
@@ -395,7 +417,7 @@ static void main_sensor_task(void* p_data, uint16_t length)
     lis2dh12_read_samples(&buffer, 1);
     data.accX = buffer.sensor.x;
     data.accY = buffer.sensor.y;
-    data.accZ = buffer.sensor.z;
+    //data.accZ = buffer.sensor.z; //psalo accZ is used above to store heatpump alarm state
   }
 
   switch(tag_mode)
@@ -473,11 +495,13 @@ static void on_radio_evt(bool active)
  After initalizition (including setting up interrupts)
     we loop here calling app_sched_execute and sd_app_evt_wait 
 */
+
 int main(void)
 {
    // LEDs first (they're easy and cannot fail)  drivers/init/init.c
   init_leds();
   RED_LED_ON;
+  nrf_gpio_cfg_input(POLL_INPUT, GPIO_PIN_CNF_PULL_Disabled);
 
   if( init_log() ) { init_status |=LOG_FAILED_INIT; }
   else { NRF_LOG_INFO("LOG initialized \r\n"); } // subsequent initializations assume log is working
